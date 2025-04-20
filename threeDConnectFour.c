@@ -15,7 +15,7 @@
 #define HEIGHT 4 // Already 4, but confirming for 4x4x4
 
 // Global variables
-int difficulty = 4; // Default AI depth
+int difficulty = 4; // Default AI depth (will be set by user)
 int board3D[HEIGHT][ROWS][COLS]; // Moved global board definition here
 Camera camera = { 0 }; // Raylib camera
 int currentPlayer = PLAYER;
@@ -23,6 +23,23 @@ bool gameOver = false;
 int winner = EMPTY; // 0: No winner, 1: Player, 2: AI, 3: Draw
 const float PIECE_RADIUS = 0.4f;
 const float SPACING = 1.0f; // Spacing between centers of pieces
+int previewH = -1, previewR = -1, previewC = -1; // For hover preview
+int winStartH = -1, winStartR = -1, winStartC = -1; // Winning line start
+int winDirH = 0, winDirR = 0, winDirC = 0;       // Winning line direction
+
+// Game States
+typedef enum {
+    STATE_SELECT_DIFFICULTY,
+    STATE_PLAYING,
+    STATE_GAME_OVER
+} GameState;
+
+GameState currentGameState = STATE_SELECT_DIFFICULTY;
+
+// Difficulty Levels
+#define DEPTH_EASY 2
+#define DEPTH_MEDIUM 4
+#define DEPTH_HARD 6
 
 // Forward declarations for 3D functions and others used before definition
 bool isFull3D();
@@ -38,6 +55,7 @@ int evaluateBoard3D(); // Added forward declaration
 void undoMove3D(int r, int c); // Added forward declaration
 void drawBoardRaylib(); // Forward declaration for Raylib drawing function
 void updateGameRaylib(); // Forward declaration for game logic update
+int findLandingHeight(int r, int c); // Helper to find where a piece would land
 
 // ----------------------- 3D CONNECT 4 SECTION -----------------------
 
@@ -69,14 +87,14 @@ bool isValidMove3D(int r, int c) {
     if (r < 0 || r >= ROWS || c < 0 || c >= COLS) {
         return false;
     }
-    // Check if the column is full (topmost level has a piece)
-    return board3D[0][r][c] == EMPTY; // Use EMPTY
+    // Check if the column is full (bottommost level has a piece) - Changed for bottom-up gravity
+    return board3D[HEIGHT - 1][r][c] == EMPTY; // Use EMPTY
 }
 
 
 int makeMove3D(int r, int c, int piece) {
-    // Find the lowest available height (h) in the selected (r, c) position
-    for (int h = HEIGHT - 1; h >= 0; h--) {
+        // Find the lowest available height (h) in the selected (r, c) position - Changed for bottom-up gravity
+    for (int h = 0; h < HEIGHT; h++) { // Iterate from bottom (h=0) upwards
         if (board3D[h][r][c] == EMPTY) { // Use EMPTY
             board3D[h][r][c] = piece;
             return h; // Return the height where the piece was placed
@@ -87,17 +105,22 @@ int makeMove3D(int r, int c, int piece) {
 
 
 void undoMove3D(int r, int c) {
-    // Find the highest piece in the column (r, c) and remove it
-    for (int h = 0; h < HEIGHT; h++) {
+    // Find the highest piece in the column (r, c) and remove it - Changed for bottom-up gravity
+    // This actually needs to find the highest piece to remove the last placed one.
+    for (int h = HEIGHT - 1; h >= 0; h--) { // Iterate from top down
         if (board3D[h][r][c] != EMPTY) { // Use EMPTY
             board3D[h][r][c] = EMPTY; // Use EMPTY
-            break;
+            break; // Remove only the top-most piece in the stack
         }
     }
 }
 
 // Comprehensive check for 4-in-a-row in 3D
 bool winningMove3D(int piece) {
+    // Reset winning line info at the start of check
+    winStartH = -1; winStartR = -1; winStartC = -1;
+    winDirH = 0; winDirR = 0; winDirC = 0;
+
     // Check all possible lines of 4 (horizontal, vertical, depth-wise, and all diagonals)
     for (int h = 0; h < HEIGHT; ++h) {
         for (int r = 0; r < ROWS; ++r) {
@@ -145,6 +168,13 @@ bool winningMove3D(int piece) {
                             board3D[h + 2 * dh][r + 2 * dr][c + 2 * dc] == piece &&
                             board3D[h + 3 * dh][r + 3 * dr][c + 3 * dc] == piece)
                         {
+                            // Store winning line info
+                            winStartH = h;
+                            winStartR = r;
+                            winStartC = c;
+                            winDirH = dh;
+                            winDirR = dr;
+                            winDirC = dc;
                             return true;
                         }
                     }
@@ -293,6 +323,17 @@ void clearInputBuffer() {
     while ((c = getchar()) != '\n' && c != EOF);
 }
 
+// Helper function to find the lowest empty slot (height) in a column
+int findLandingHeight(int r, int c) {
+    if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return -1; // Bounds check
+    for (int h = 0; h < HEIGHT; h++) { // Iterate bottom-up
+        if (board3D[h][r][c] == EMPTY) {
+            return h;
+        }
+    }
+    return -1; // Column is full
+}
+
 // ----------------------- RAYLIB VISUALIZATION & GAME LOOP -----------------------
 
 // Function to calculate the 3D position of a piece
@@ -312,79 +353,129 @@ Vector3 GetPiecePosition(int h, int r, int c) {
 void drawBoardRaylib() {
     ClearBackground(RAYWHITE);
 
-    BeginMode3D(camera);
+    if (currentGameState == STATE_SELECT_DIFFICULTY) {
+        // Draw Difficulty Selection Screen
+        DrawText("Select Difficulty:", GetScreenWidth() / 2 - MeasureText("Select Difficulty:", 40) / 2, GetScreenHeight() / 2 - 80, 40, DARKGRAY);
+        DrawText("1. Easy", GetScreenWidth() / 2 - MeasureText("1. Easy", 30) / 2, GetScreenHeight() / 2 - 20, 30, DARKGREEN);
+        DrawText("2. Medium", GetScreenWidth() / 2 - MeasureText("2. Medium", 30) / 2, GetScreenHeight() / 2 + 20, 30, ORANGE);
+        DrawText("3. Hard", GetScreenWidth() / 2 - MeasureText("3. Hard", 30) / 2, GetScreenHeight() / 2 + 60, 30, MAROON);
+    } else {
+        // Draw Game Board and UI (STATE_PLAYING or STATE_GAME_OVER)
+        BeginMode3D(camera);
 
-    // Draw the wireframe structure for the 4x4x4 grid
-    float boardWidth = COLS * SPACING;
-    float boardDepth = ROWS * SPACING;
-    float boardHeight = HEIGHT * SPACING;
-    Vector3 boardCenter = { 0.0f, boardHeight / 2.0f, 0.0f };
-    DrawCubeWiresV((Vector3){ boardCenter.x, boardCenter.y - SPACING/2.0f, boardCenter.z }, // Offset Y slightly to center wires around pieces
-                   (Vector3){ boardWidth, boardHeight, boardDepth }, LIGHTGRAY);
+        // Draw the wireframe structure for the 4x4x4 grid
+        float boardWidth = COLS * SPACING;
+        float boardDepth = ROWS * SPACING;
+        float boardHeight = HEIGHT * SPACING;
+        Vector3 boardCenter = { 0.0f, boardHeight / 2.0f, 0.0f };
+        DrawCubeWiresV((Vector3){ boardCenter.x, boardCenter.y - SPACING/2.0f, boardCenter.z }, // Offset Y slightly to center wires around pieces
+                       (Vector3){ boardWidth, boardHeight, boardDepth }, LIGHTGRAY);
 
-    // Draw the pieces (Loops updated for 4x4x4)
-    for (int h = 0; h < HEIGHT; h++) {
-        for (int r = 0; r < ROWS; r++) {
-            for (int c = 0; c < COLS; c++) {
-                if (board3D[h][r][c] != EMPTY) {
-                    Vector3 pos = GetPiecePosition(h, r, c);
-                    Color color = (board3D[h][r][c] == PLAYER) ? RED : YELLOW;
-                    DrawSphere(pos, PIECE_RADIUS, color);
+        // Draw the pieces (Loops updated for 4x4x4)
+        for (int h = 0; h < HEIGHT; h++) {
+            for (int r = 0; r < ROWS; r++) {
+                for (int c = 0; c < COLS; c++) {
+                    if (board3D[h][r][c] != EMPTY) {
+                        Vector3 pos = GetPiecePosition(h, r, c);
+                        Color color = (board3D[h][r][c] == PLAYER) ? RED : YELLOW;
+                        DrawSphere(pos, PIECE_RADIUS, color);
+                    }
+                    // Optional: Draw faint spheres for empty slots
+                    /* else {
+                        Vector3 pos = GetPiecePosition(h, r, c);
+                        DrawSphereWires(pos, PIECE_RADIUS * 0.8f, 6, 6, LIGHTGRAY);
+                    } */
                 }
-                // Optional: Draw faint spheres for empty slots
-                /* else {
-                    Vector3 pos = GetPiecePosition(h, r, c);
-                    DrawSphereWires(pos, PIECE_RADIUS * 0.8f, 6, 6, LIGHTGRAY);
-                } */
             }
         }
-    }
 
-    // Draw the base grid (4x4)
-    float gridWidth = COLS * SPACING;
-    float gridDepth = ROWS * SPACING;
-    float gridY = -0.1f; // Slightly below the first level
-    Vector3 centerOffset = { -gridWidth / 2.0f, gridY, -gridDepth / 2.0f };
+        // Draw the base grid (4x4)
+        float gridWidth = COLS * SPACING;
+        float gridDepth = ROWS * SPACING;
+        float gridY = -0.1f; // Slightly below the first level
+        Vector3 centerOffset = { -gridWidth / 2.0f, gridY, -gridDepth / 2.0f };
 
-    // Draw horizontal lines (along Z)
-    for (int i = 0; i <= ROWS; i++) {
-        DrawLine3D((Vector3){ centerOffset.x, gridY, centerOffset.z + i * SPACING },
-                   (Vector3){ centerOffset.x + gridWidth, gridY, centerOffset.z + i * SPACING }, DARKGRAY);
-    }
-    // Draw vertical lines (along X)
-    for (int i = 0; i <= COLS; i++) {
-        DrawLine3D((Vector3){ centerOffset.x + i * SPACING, gridY, centerOffset.z },
-                   (Vector3){ centerOffset.x + i * SPACING, gridY, centerOffset.z + gridDepth }, DARKGRAY);
-    }
+        // Draw horizontal lines (along Z)
+        for (int i = 0; i <= ROWS; i++) {
+            DrawLine3D((Vector3){ centerOffset.x, gridY, centerOffset.z + i * SPACING },
+                       (Vector3){ centerOffset.x + gridWidth, gridY, centerOffset.z + i * SPACING }, DARKGRAY);
+        }
+        // Draw vertical lines (along X)
+        for (int i = 0; i <= COLS; i++) {
+            DrawLine3D((Vector3){ centerOffset.x + i * SPACING, gridY, centerOffset.z },
+                       (Vector3){ centerOffset.x + i * SPACING, gridY, centerOffset.z + gridDepth }, DARKGRAY);
+        }
 
-    EndMode3D();
+        // Draw Preview Piece (if valid hover)
+        if (previewH != -1) {
+            Vector3 previewPos = GetPiecePosition(previewH, previewR, previewC);
+            DrawSphere(previewPos, PIECE_RADIUS, Fade(RED, 0.5f)); // Draw semi-transparent red sphere
+        }
 
-    // Draw UI elements
-    DrawText("3D Connect Four (Raylib)", 10, 10, 20, DARKGRAY);
-    if (gameOver) {
-        const char* winText = "";
-        if (winner == PLAYER) winText = "Player Wins!";
-        else if (winner == AI) winText = "AI Wins!";
-        else winText = "It's a Draw!";
-        DrawText(winText, GetScreenWidth() / 2 - MeasureText(winText, 40) / 2, GetScreenHeight() / 2 - 20, 40, BLACK);
-        DrawText("Press [R] to Restart", GetScreenWidth() / 2 - MeasureText("Press [R] to Restart", 20) / 2, GetScreenHeight() / 2 + 30, 20, DARKGRAY);
-    } else {
-        const char* turnText = (currentPlayer == PLAYER) ? "Player's Turn" : "AI's Turn";
-        DrawText(turnText, 10, 40, 20, (currentPlayer == PLAYER) ? RED : ORANGE);
+        // Draw Winning Line (if game over and there's a winner)
+        if (currentGameState == STATE_GAME_OVER && winner != EMPTY && winner != 3) { // 3 is Draw
+            if (winStartH != -1) { // Check if win info is valid
+                Vector3 startPos = GetPiecePosition(winStartH, winStartR, winStartC);
+                Vector3 endPos = GetPiecePosition(winStartH + 3 * winDirH,
+                                                winStartR + 3 * winDirR,
+                                                winStartC + 3 * winDirC);
+                DrawLine3D(startPos, endPos, BLACK); // Draw a thick black line
+                // Optionally draw thicker line or highlight spheres
+                for (int i = 0; i < 4; i++) {
+                     Vector3 piecePos = GetPiecePosition(winStartH + i * winDirH, winStartR + i * winDirR, winStartC + i * winDirC);
+                     DrawSphereWires(piecePos, PIECE_RADIUS + 0.1f, 8, 8, BLACK);
+                 }
+            }
+        }
+
+        EndMode3D();
+
+        // Draw UI elements
+        DrawText("Sogo (4x4x4 Connect Four)", 10, 10, 20, DARKGRAY); // Updated Title in UI
+        if (currentGameState == STATE_GAME_OVER) { // Changed from gameOver bool
+            const char* winText = "";
+            if (winner == PLAYER) winText = "Player Wins!";
+            else if (winner == AI) winText = "AI Wins!";
+            else winText = "It's a Draw!";
+            DrawText(winText, GetScreenWidth() / 2 - MeasureText(winText, 40) / 2, GetScreenHeight() / 2 - 20, 40, BLACK);
+            DrawText("Press [R] to Restart", GetScreenWidth() / 2 - MeasureText("Press [R] to Restart", 20) / 2, GetScreenHeight() / 2 + 30, 20, DARKGRAY);
+        } else { // STATE_PLAYING
+            const char* turnText = (currentPlayer == PLAYER) ? "Player's Turn" : "AI's Turn";
+            DrawText(turnText, 10, 40, 20, (currentPlayer == PLAYER) ? RED : ORANGE);
+            // Optionally display current difficulty
+            const char* diffText;
+            if (difficulty == DEPTH_EASY) diffText = "Easy";
+            else if (difficulty == DEPTH_MEDIUM) diffText = "Medium";
+            else diffText = "Hard";
+            DrawText(TextFormat("Difficulty: %s", diffText), GetScreenWidth() - 150, 10, 20, DARKGRAY);
+        }
     }
 }
 
 // Game update logic within Raylib loop
 void updateGameRaylib() {
-    // UpdateCamera(&camera, CAMERA_ORBITAL); // Remove default orbital control
+    // Define camera control variables here so they are accessible in multiple states
     Vector2 mouseDelta = GetMouseDelta();
-        float zoomInput = GetMouseWheelMove();
-        float rotateSpeed = 0.005f; // Sensitivity for rotation
-        float panSpeed = 0.08f;    // Sensitivity for panning
-        float zoomSpeed = 1.2f;     // Sensitivity for zoom
-    // Custom Camera Control: Left-click drag to rotate, Wheel to zoom
-    if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
-        // Calculate rotation angles based on mouse delta
+    float rotateSpeed = 0.003f; // Adjust sensitivity as needed
+    float wheel = GetMouseWheelMove();
+
+    if (currentGameState == STATE_SELECT_DIFFICULTY) {
+        // Handle Difficulty Selection Input
+        if (IsKeyPressed(KEY_ONE)) {
+            difficulty = DEPTH_EASY;
+            currentGameState = STATE_PLAYING;
+        } else if (IsKeyPressed(KEY_TWO)) {
+            difficulty = DEPTH_MEDIUM;
+            currentGameState = STATE_PLAYING;
+        } else if (IsKeyPressed(KEY_THREE)) {
+            difficulty = DEPTH_HARD;
+            currentGameState = STATE_PLAYING;
+        }
+    } else if (currentGameState == STATE_PLAYING) {
+        // --- Existing Game Logic (with camera controls moved inside) ---
+        // Custom Camera Control: Left-click drag to rotate, Wheel to zoom
+        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+            // Calculate rotation angles based on mouse delta
             float yawAngle = -mouseDelta.x * rotateSpeed;
             float pitchAngle = -mouseDelta.y * rotateSpeed;
 
@@ -409,93 +500,144 @@ void updateGameRaylib() {
 
             // Calculate the new camera position
             camera.position = Vector3Add(camera.target, targetToPos);
-
-    } else {
-        // Allow zooming anytime with the mouse wheel
-        float wheel = GetMouseWheelMove();
-        if (wheel != 0) {
-            // Zoom based on wheel movement
-            UpdateCameraPro(&camera, (Vector3){ 0.0f, 0.0f, wheel * -0.5f }, (Vector3){ 0.0f, 0.0f, 0.0f }, 0.0f);
+        } else {
+            // Allow zooming anytime with the mouse wheel
+            if (wheel != 0) {
+                // Zoom based on wheel movement
+                UpdateCameraPro(&camera, (Vector3){ 0.0f, 0.0f, wheel * -0.5f }, (Vector3){ 0.0f, 0.0f, 0.0f }, 0.0f);
+            }
         }
-    }
 
-    // Restart Game
-    if (gameOver && IsKeyPressed(KEY_R)) {
-        memset(board3D, EMPTY, sizeof(board3D));
-        currentPlayer = PLAYER;
-        gameOver = false;
-        winner = EMPTY;
-        return; // Skip rest of update on restart
-    }
+        // Reset preview hover state each frame
+        previewH = -1;
+        previewR = -1;
+        previewC = -1;
 
-    if (gameOver) return; // Don't process moves if game is over
+        // Hover and Player Turn Logic
+        if (currentPlayer == PLAYER) {
+            Ray ray = GetMouseRay(GetMousePosition(), camera);
+            float gridWidth = COLS * SPACING;
+            float gridDepth = ROWS * SPACING;
+            BoundingBox gridBox = {
+                (Vector3){ -gridWidth / 2.0f, -0.1f, -gridDepth / 2.0f },
+                (Vector3){ gridWidth / 2.0f, 0.1f, gridDepth / 2.0f }
+            };
+            RayCollision collision = GetRayCollisionBox(ray, gridBox);
 
-    // Player's Turn Logic
-    if (currentPlayer == PLAYER && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
-        Ray ray = GetMouseRay(GetMousePosition(), camera);
+            if (collision.hit) {
+                // Map collision point to row and column
+                float hitX = collision.point.x + gridWidth / 2.0f;
+                float hitZ = collision.point.z + gridDepth / 2.0f;
+                int c = (int)(hitX / SPACING);
+                int r = (int)(hitZ / SPACING);
 
-        // Define the bounding box for the base grid (4x4) for click detection
-        float gridWidth = COLS * SPACING; // Now 4 * SPACING
-        float gridDepth = ROWS * SPACING; // Now 4 * SPACING
-        BoundingBox gridBox = {
-            (Vector3){ -gridWidth / 2.0f, -0.1f, -gridDepth / 2.0f },
-            (Vector3){ gridWidth / 2.0f, 0.1f, gridDepth / 2.0f }
-        };
+                // Clamp values
+                if (c < 0) c = 0; if (c >= COLS) c = COLS - 1;
+                if (r < 0) r = 0; if (r >= ROWS) r = ROWS - 1;
 
-        RayCollision collision = GetRayCollisionBox(ray, gridBox);
+                // Update preview state if the move is valid
+                if (isValidMove3D(r, c)) {
+                    previewH = findLandingHeight(r, c);
+                    previewR = r;
+                    previewC = c;
 
-        if (collision.hit) {
-            // Map collision point to row and column (Logic remains the same, but bounds are 0-3)
-            float hitX = collision.point.x + gridWidth / 2.0f;
-            float hitZ = collision.point.z + gridDepth / 2.0f;
-
-            int c = (int)(hitX / SPACING);
-            int r = (int)(hitZ / SPACING);
-
-            // Clamp values to new bounds (0 to 3)
-            if (c < 0) c = 0; if (c >= COLS) c = COLS - 1; // COLS is now 4
-            if (r < 0) r = 0; if (r >= ROWS) r = ROWS - 1; // ROWS is now 4
-
-            printf("Clicked grid cell: r=%d, c=%d\n", r, c); // Debug print
-
-            if (isValidMove3D(r, c)) {
-                makeMove3D(r, c, PLAYER);
-                if (winningMove3D(PLAYER)) {
-                    gameOver = true;
-                    winner = PLAYER;
-                } else if (isFull3D()) {
-                    gameOver = true;
-                    winner = 3; // Use 3 for Draw consistently
+                    // Check for actual click to make the move
+                    if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+                        makeMove3D(r, c, PLAYER);
+                        // Reset preview immediately after move
+                        previewH = -1; previewR = -1; previewC = -1;
+                        if (winningMove3D(PLAYER)) {
+                            currentGameState = STATE_GAME_OVER;
+                            winner = PLAYER;
+                        } else if (isFull3D()) {
+                            currentGameState = STATE_GAME_OVER;
+                            winner = 3; // Draw
+                        } else {
+                            currentPlayer = AI;
+                        }
+                    }
                 } else {
-                    currentPlayer = AI;
+                    // Hovering over an invalid/full column, ensure preview is off
+                    previewH = -1; previewR = -1; previewC = -1;
                 }
             } else {
-                 printf("Invalid move attempt at r=%d, c=%d\n", r, c); // Debug print
+                 // Not hovering over the grid, ensure preview is off
+                 previewH = -1; previewR = -1; previewC = -1;
             }
         }
-    }
-    // AI's Turn Logic (Loops inside getBestMove3D/minimax3D implicitly use new bounds)
-    else if (currentPlayer == AI) {
-        int ai_r, ai_c;
-        getBestMove3D(&ai_r, &ai_c);
+        // AI's Turn Logic
+        else if (currentPlayer == AI) {
+            int ai_r, ai_c;
+            getBestMove3D(&ai_r, &ai_c);
 
-        if (ai_r != -1 && ai_c != -1) { // Check if a valid move was found
-            makeMove3D(ai_r, ai_c, AI);
-             printf("AI moved at r=%d, c=%d\n", ai_r, ai_c); // Debug print
-            if (winningMove3D(AI)) {
-                gameOver = true;
-                winner = AI;
-            } else if (isFull3D()) {
-                gameOver = true;
-                winner = 3; // Use 3 for Draw consistently
+            if (ai_r != -1 && ai_c != -1) { // Check if a valid move was found
+                makeMove3D(ai_r, ai_c, AI);
+                 printf("AI moved at r=%d, c=%d\n", ai_r, ai_c); // Debug print
+                if (winningMove3D(AI)) {
+                    // gameOver = true; // Replaced by state change
+                    currentGameState = STATE_GAME_OVER;
+                    winner = AI;
+                } else if (isFull3D()) {
+                    // gameOver = true; // Replaced by state change
+                    currentGameState = STATE_GAME_OVER;
+                    winner = 3; // Use 3 for Draw consistently
+                } else {
+                    currentPlayer = PLAYER;
+                }
             } else {
-                currentPlayer = PLAYER;
+                // Should not happen unless board is full and isFull3D() didn't catch it
+                printf("AI could not find a move!\n");
+                // gameOver = true; // Replaced by state change
+                currentGameState = STATE_GAME_OVER;
+                winner = 3; // Use 3 for Draw consistently
             }
+        }
+        // --- End of Existing Game Logic ---
+
+    } else { // STATE_GAME_OVER
+        // Handle Restart Input
+        if (IsKeyPressed(KEY_R)) {
+            memset(board3D, EMPTY, sizeof(board3D));
+            currentPlayer = PLAYER;
+            winner = EMPTY;
+            // Reset winning line info
+            winStartH = -1; winStartR = -1; winStartC = -1;
+            winDirH = 0; winDirR = 0; winDirC = 0;
+            currentGameState = STATE_SELECT_DIFFICULTY; // Go back to difficulty selection
+        }
+        // Allow camera movement even when game is over
+        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+            // Calculate rotation angles based on mouse delta
+            float yawAngle = -mouseDelta.x * rotateSpeed;
+            float pitchAngle = -mouseDelta.y * rotateSpeed;
+
+            // Get the vector from target to position
+            Vector3 targetToPos = Vector3Subtract(camera.position, camera.target);
+
+            // Rotate around the global UP axis (Y) for yaw
+            targetToPos = Vector3RotateByAxisAngle(targetToPos, camera.up, yawAngle);
+
+            // Calculate the camera's right vector (perpendicular to view direction and up)
+            Vector3 right = Vector3Normalize(Vector3CrossProduct(Vector3Subtract(camera.target, camera.position), camera.up));
+            // Ensure right vector is valid (avoid issues when looking straight up/down)
+            if (fabsf(Vector3DotProduct(right, right)) < 0.001f) {
+                 right = Vector3Normalize(Vector3CrossProduct((Vector3){0.0f, 0.0f, 1.0f}, camera.up)); // Use Z if view is aligned with up
+                 if (fabsf(Vector3DotProduct(right, right)) < 0.001f) {
+                     right = (Vector3){1.0f, 0.0f, 0.0f}; // Use X as last resort
+                 }
+            }
+
+            // Rotate around the camera's right axis for pitch
+            targetToPos = Vector3RotateByAxisAngle(targetToPos, right, pitchAngle);
+
+            // Calculate the new camera position
+            camera.position = Vector3Add(camera.target, targetToPos);
         } else {
-            // Should not happen unless board is full and isFull3D() didn't catch it
-            printf("AI could not find a move!\n");
-            gameOver = true;
-            winner = 3; // Use 3 for Draw consistently
+            // Allow zooming anytime with the mouse wheel
+            if (wheel != 0) {
+                // Zoom based on wheel movement
+                UpdateCameraPro(&camera, (Vector3){ 0.0f, 0.0f, wheel * -0.5f }, (Vector3){ 0.0f, 0.0f, 0.0f }, 0.0f);
+            }
         }
     }
 }
@@ -522,9 +664,9 @@ int main() {
     currentPlayer = PLAYER; // Start with player
     gameOver = false;
     winner = EMPTY;
+    currentGameState = STATE_SELECT_DIFFICULTY; // Start at difficulty selection
 
-    // TODO: Add difficulty selection logic here if needed, or set a default
-    // For now, using the default difficulty = 4
+    // NOTE: difficulty is set in updateGameRaylib based on user input
 
     SetTargetFPS(60);               // Set our game to run at 60 frames-per-second
 
@@ -547,10 +689,3 @@ int main() {
 
     return 0;
 }
-
-// Remove or comment out the old console-based game loop
-/*
-void playGame3D() {
-    // ... (old console game loop code) ...
-}
-*/
